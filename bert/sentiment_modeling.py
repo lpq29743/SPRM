@@ -613,7 +613,7 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
 
     def forward(self, mode, attention_mask, input_ids=None, token_type_ids=None, start_positions=None,
                 end_positions=None, aspect_num=None, span_starts=None, span_ends=None, span_aspect_num=None,
-                polarity_labels=None, label_masks=None, ac_final_sequence_output=None, logger=None):
+                polarity_labels=None, label_masks=None, tc_final_sequence_output=None, logger=None):
         if mode == 'train':
             assert input_ids is not None and token_type_ids is not None
             # Shared Part
@@ -628,7 +628,7 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
             tc_sequence_output = self.tc_dense(tc_sequence_output)
 
             assert start_positions is not None and end_positions is not None
-            # Aspect Extraction Prediction
+            # Target Extraction
             te_final_sequence_output = torch.cat([bert_sequence_output, te_sequence_output], -1)
 
             te_logits = self.extraction(te_final_sequence_output)  # [N, L, 2]
@@ -636,24 +636,23 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
             start_logits = start_logits.squeeze(-1)
             end_logits = end_logits.squeeze(-1)
 
-            # Aspect Extraction Loss
             start_loss, start_aspect_num = distant_cross_entropy(start_logits, start_positions, attention_mask)
             end_loss, end_aspect_num = distant_cross_entropy(end_logits, end_positions, attention_mask)
             te_loss = (start_loss + end_loss) / 2
 
             assert span_starts is not None and span_ends is not None and polarity_labels is not None \
                    and label_masks is not None
-            # Aspect Classification
-            ac_final_sequence_output = torch.cat([bert_sequence_output, ac_sequence_output], -1)
+            # Target Classification
+            tc_final_sequence_output = torch.cat([bert_sequence_output, tc_sequence_output], -1)
 
-            span_output, span_mask = get_span_representation(span_starts, span_ends, ac_final_sequence_output,
+            span_output, span_mask = get_span_representation(span_starts, span_ends, tc_final_sequence_output,
                                                              attention_mask)  # [N*M, JR, D], [N*M, JR]
             # Attention
             span_score = self.attention(span_output)
             span_score = span_score.squeeze(-1)  # [N*M, JR]
             span_pooled_output = get_self_att_representation(span_output, span_score, span_mask)  # [N*M, D]
 
-            span_pooled_output = self.ac_output_layer(span_pooled_output)
+            span_pooled_output = self.tc_output_layer(span_pooled_output)
             span_pooled_output = self.activation(span_pooled_output)
             span_pooled_output = self.dropout(span_pooled_output)
 
@@ -702,14 +701,14 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
 
         elif mode == 'classify_inference':
             assert span_starts is not None and span_ends is not None and ac_final_sequence_output is not None
-            span_output, span_mask = get_span_representation(span_starts, span_ends, ac_final_sequence_output,
+            span_output, span_mask = get_span_representation(span_starts, span_ends, tc_final_sequence_output,
                                                              attention_mask)  # [N*M, JR, D], [N*M, JR]
 
             span_score = self.attention(span_output)
             span_score = span_score.squeeze(-1)  # [N*M, JR]
             span_pooled_output = get_self_att_representation(span_output, span_score, span_mask)  # [N*M, D]
 
-            span_pooled_output = self.ac_output_layer(span_pooled_output)
+            span_pooled_output = self.tc_output_layer(span_pooled_output)
             span_pooled_output = self.activation(span_pooled_output)
             span_pooled_output = self.dropout(span_pooled_output)
 
