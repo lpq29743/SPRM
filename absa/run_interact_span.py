@@ -111,7 +111,7 @@ def run_train_epoch(args, global_step, model, param_optimizer,
                     eval_examples, eval_features, eval_dataloader,
                     optimizer, n_gpu, device, logger, log_path, save_path,
                     save_checkpoints_steps, start_save_steps, best_f1):
-    running_loss, running_ae_loss, running_ac_loss, count = 0.0, 0.0, 0.0, 0
+    running_loss, running_te_loss, running_tc_loss, count = 0.0, 0.0, 0.0, 0
     for step, batch in enumerate(train_dataloader):
         if n_gpu == 1:
             batch = tuple(t.to(device) for t in batch)  # multi-gpu does scattering it-self
@@ -154,18 +154,18 @@ def run_train_epoch(args, global_step, model, param_optimizer,
         labels = labels.to(device)
         label_masks = label_masks.to(device)
 
-        ae_loss, ac_loss = model('train', input_mask, input_ids=input_ids, token_type_ids=segment_ids,
+        te_loss, tc_loss = model('train', input_mask, input_ids=input_ids, token_type_ids=segment_ids,
                                  start_positions=start_positions, end_positions=end_positions,
                                  aspect_num=aspect_num,
                                  span_starts=span_starts, span_ends=span_ends,
                                  span_aspect_num=span_aspect_num,
                                  polarity_labels=labels, label_masks=label_masks, logger=logger)
-        ae_loss = post_process_loss(args, n_gpu, ae_loss)
-        ac_loss = post_process_loss(args, n_gpu, ac_loss)
-        loss = post_process_loss(args, n_gpu, ae_loss + ac_loss)
+        te_loss = post_process_loss(args, n_gpu, te_loss)
+        tc_loss = post_process_loss(args, n_gpu, tc_loss)
+        loss = post_process_loss(args, n_gpu, te_loss + tc_loss)
         loss.backward()
-        running_ae_loss += ae_loss.item()
-        running_ac_loss += ac_loss.item()
+        running_te_loss += te_loss.item()
+        running_tc_loss += tc_loss.item()
         running_loss += loss.item()
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
@@ -192,8 +192,8 @@ def run_train_epoch(args, global_step, model, param_optimizer,
                 logger.info(
                     "step: {}, loss: {:.4f}, ae loss: {:.4f}, ac loss: {:.4f}".format(global_step,
                                                                                       running_loss / count,
-                                                                                      running_ae_loss / count,
-                                                                                      running_ac_loss / count))
+                                                                                      running_te_loss / count,
+                                                                                      running_tc_loss / count))
 
             if global_step % save_checkpoints_steps == 0 and global_step > start_save_steps and count != 0:  # eval & save model
                 logger.info("***** Running evaluation *****")
@@ -202,12 +202,12 @@ def run_train_epoch(args, global_step, model, param_optimizer,
                 f = open(log_path, "a")
                 print(
                     "step: {}, loss: {:.4f}, ae loss: {:.4f}, ac loss: {:.4f}, P: {:.4f}, R: {:.4f}, F1: {:.4f} (common: {}, retrieved: {}, relevant: {})"
-                        .format(global_step, running_loss / count, running_ae_loss / count, running_ac_loss / count,
+                        .format(global_step, running_loss / count, running_te_loss / count, running_tc_loss / count,
                                 metrics['p'], metrics['r'],
                                 metrics['f1'], metrics['common'], metrics['retrieved'], metrics['relevant']), file=f)
                 print(" ", file=f)
                 f.close()
-                running_loss, running_ae_loss, running_ac_loss, count = 0.0, 0.0, 0.0, 0
+                running_loss, running_te_loss, running_tc_loss, count = 0.0, 0.0, 0.0, 0
                 model.train()
                 if metrics['f1'] > best_f1:
                     best_f1 = metrics['f1']
@@ -227,7 +227,7 @@ def evaluate(args, model, device, eval_examples, eval_features, eval_dataloader,
         batch = tuple(t.to(device) for t in batch)
         input_ids, input_mask, segment_ids, example_indices = batch
         with torch.no_grad():
-            batch_start_logits, batch_end_logits, batch_aspect_num, ac_final_sequence_output = model(
+            batch_start_logits, batch_end_logits, batch_aspect_num, tc_final_sequence_output = model(
                 'extract_inference', input_mask, input_ids=input_ids, token_type_ids=segment_ids, logger=logger)
 
         batch_features, batch_results = [], []
@@ -254,14 +254,14 @@ def evaluate(args, model, device, eval_examples, eval_features, eval_dataloader,
         span_ends = torch.tensor(span_ends, dtype=torch.long)
         span_starts = span_starts.to(device)
         span_ends = span_ends.to(device)
-        ac_final_sequence_output = ac_final_sequence_output.to(device)
+        tc_final_sequence_output = tc_final_sequence_output.to(device)
         with torch.no_grad():
-            batch_ac_logits = model('classify_inference', input_mask, span_starts=span_starts,
-                                    span_ends=span_ends, ac_final_sequence_output=ac_final_sequence_output,
+            batch_tc_logits = model('classify_inference', input_mask, span_starts=span_starts,
+                                    span_ends=span_ends, tc_final_sequence_output=tc_final_sequence_output,
                                     logger=logger)  # [N, M, 4]
 
         for j, example_index in enumerate(example_indices):
-            cls_pred = batch_ac_logits[j].detach().cpu().numpy().argmax(axis=1).tolist()
+            cls_pred = batch_tc_logits[j].detach().cpu().numpy().argmax(axis=1).tolist()
             start_indexes = span_starts[j].detach().cpu().tolist()
             end_indexes = span_ends[j].detach().cpu().tolist()
             start_logits = batch_start_logits[j].detach().cpu().tolist()
