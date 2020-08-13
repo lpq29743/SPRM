@@ -578,10 +578,7 @@ class BertForInteractBIOExtractAndClassification(nn.Module):
         self.ae_dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
         self.ac_dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
 
-        # TODO check with Google if it's normal there is no dropout on the token classifier of SQuAD in the TF version
-        # self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.bio_affine = nn.Linear(config.hidden_size * 2, 3)
-        # self.cls_affine = nn.Linear(config.hidden_size * 2, 5)
         self.crf = ConditionalRandomField(3)
 
         self.attention = nn.Linear(config.hidden_size * 2, 1)
@@ -628,26 +625,10 @@ class BertForInteractBIOExtractAndClassification(nn.Module):
             assert bio_labels is not None
             ae_final_sequence_output = torch.cat([bert_sequence_output, ae_sequence_output], -1)
             ae_logits = self.bio_affine(ae_final_sequence_output)
-            # flat_ae_logits = flatten(ae_logits)
-            # flat_bio_labels = flatten(bio_labels)
-            # flat_attention_mask = flatten(attention_mask).to(dtype=flat_ae_logits.dtype)
-            # loss_fct = CrossEntropyLoss(reduction='none')
-            # loss = loss_fct(flat_ae_logits, flat_bio_labels)
-            # ae_loss = torch.sum(flat_attention_mask * loss) / flat_attention_mask.sum()
             ae_loss = -self.crf(ae_logits, bio_labels, attention_mask) / (ae_logits.size()[0])
 
             assert polarity_positions is not None
             ac_final_sequence_output = torch.cat([bert_sequence_output, ac_sequence_output], -1)
-            # ac_logits = self.cls_affine(ac_final_sequence_output)
-            # if self.use_crf:
-            #     ac_loss = -self.cls_crf(ac_logits, polarity_positions, attention_mask) / (ac_logits.size()[0])
-            # else:
-            #     flat_ac_logits = flatten(ac_logits)
-            #     flat_polarity_positions = flatten(polarity_positions)
-            #     flat_attention_mask = flatten(attention_mask).to(dtype=flat_ac_logits.dtype)
-            #     loss_fct = CrossEntropyLoss(reduction='none')
-            #     loss = loss_fct(flat_ac_logits, flat_polarity_positions)
-            #     ac_loss = torch.sum(flat_attention_mask * loss) / flat_attention_mask.sum()
             span_output, span_mask = get_span_representation(span_starts, span_ends, ac_final_sequence_output,
                                                              attention_mask)  # [N*M, JR, D], [N*M, JR]
             # Attention
