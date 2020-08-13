@@ -700,7 +700,7 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
             return start_logits, end_logits, target_num_prediction, tc_final_sequence_output
 
         elif mode == 'classify_inference':
-            assert span_starts is not None and span_ends is not None and ac_final_sequence_output is not None
+            assert span_starts is not None and span_ends is not None and tc_final_sequence_output is not None
             span_output, span_mask = get_span_representation(span_starts, span_ends, tc_final_sequence_output,
                                                              attention_mask)  # [N*M, JR, D], [N*M, JR]
 
