@@ -573,15 +573,15 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
         self.bert = BertModel(config)
 
         # Private Part
-        self.ae_bilstm = nn.LSTM(input_size=config.hidden_size, hidden_size=config.hidden_size, batch_first=True,
+        self.te_bilstm = nn.LSTM(input_size=config.hidden_size, hidden_size=config.hidden_size, batch_first=True,
                                  bidirectional=True)
-        self.ac_bilstm = nn.LSTM(input_size=config.hidden_size, hidden_size=config.hidden_size, batch_first=True,
+        self.tc_bilstm = nn.LSTM(input_size=config.hidden_size, hidden_size=config.hidden_size, batch_first=True,
                                  bidirectional=True)
-        self.ae_dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
-        self.ac_dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
+        self.te_dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
+        self.tc_dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
 
         self.attention = nn.Linear(config.hidden_size * 2, 1)
-        self.ac_output_layer = nn.Linear(config.hidden_size * 2, output_hidden_size)
+        self.tc_output_layer = nn.Linear(config.hidden_size * 2, output_hidden_size)
 
         self.extraction = nn.Linear(config.hidden_size * 2, 2)
 
@@ -622,29 +622,28 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
 
             # Private Part
             sentence_inputs = self.bert.embeddings(input_ids)
-            ae_sequence_output, _ = self.ae_bilstm(sentence_inputs)
-            ae_sequence_output = self.ae_dense(ae_sequence_output)
-            ac_sequence_output, _ = self.ac_bilstm(sentence_inputs)
-            ac_sequence_output = self.ac_dense(ac_sequence_output)
+            te_sequence_output, _ = self.te_bilstm(sentence_inputs)
+            te_sequence_output = self.te_dense(te_sequence_output)
+            tc_sequence_output, _ = self.tc_bilstm(sentence_inputs)
+            tc_sequence_output = self.tc_dense(tc_sequence_output)
 
             assert start_positions is not None and end_positions is not None
             # Aspect Extraction Prediction
-            ae_final_sequence_output = torch.cat([bert_sequence_output, ae_sequence_output], -1)
+            te_final_sequence_output = torch.cat([bert_sequence_output, te_sequence_output], -1)
 
-            ae_logits = self.extraction(ae_final_sequence_output)  # [N, L, 2]
-            start_logits, end_logits = ae_logits.split(1, dim=-1)
+            te_logits = self.extraction(te_final_sequence_output)  # [N, L, 2]
+            start_logits, end_logits = te_logits.split(1, dim=-1)
             start_logits = start_logits.squeeze(-1)
             end_logits = end_logits.squeeze(-1)
 
             # Aspect Extraction Loss
             start_loss, start_aspect_num = distant_cross_entropy(start_logits, start_positions, attention_mask)
             end_loss, end_aspect_num = distant_cross_entropy(end_logits, end_positions, attention_mask)
-            ae_loss = (start_loss + end_loss) / 2
+            te_loss = (start_loss + end_loss) / 2
 
             assert span_starts is not None and span_ends is not None and polarity_labels is not None \
                    and label_masks is not None
             # Aspect Classification
-
             ac_final_sequence_output = torch.cat([bert_sequence_output, ac_sequence_output], -1)
 
             span_output, span_mask = get_span_representation(span_starts, span_ends, ac_final_sequence_output,
@@ -658,15 +657,15 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
             span_pooled_output = self.activation(span_pooled_output)
             span_pooled_output = self.dropout(span_pooled_output)
 
-            ac_logits = self.classifier(span_pooled_output)  # [N*M, 5]
+            tc_logits = self.classifier(span_pooled_output)  # [N*M, 5]
 
-            ac_loss_fct = CrossEntropyLoss(reduction='none')
+            tc_loss_fct = CrossEntropyLoss(reduction='none')
             flat_polarity_labels = flatten(polarity_labels)
-            flat_label_masks = flatten(label_masks).to(dtype=ac_logits.dtype)
-            ac_loss = ac_loss_fct(ac_logits, flat_polarity_labels)
-            ac_loss = torch.sum(flat_label_masks * ac_loss) / flat_label_masks.sum()
+            flat_label_masks = flatten(label_masks).to(dtype=tc_logits.dtype)
+            tc_loss = tc_loss_fct(tc_logits, flat_polarity_labels)
+            tc_loss = torch.sum(flat_label_masks * tc_loss) / flat_label_masks.sum()
 
-            return ae_loss, ac_loss
+            return te_loss, tc_loss
 
         elif mode == 'extract_inference':
             assert input_ids is not None and token_type_ids is not None
@@ -676,15 +675,15 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
 
             # Private Part
             sentence_inputs = self.bert.embeddings(input_ids)
-            ae_sequence_output, _ = self.ae_bilstm(sentence_inputs)
-            ae_sequence_output = self.ae_dense(ae_sequence_output)
-            ac_sequence_output, _ = self.ac_bilstm(sentence_inputs)
-            ac_sequence_output = self.ac_dense(ac_sequence_output)
+            te_sequence_output, _ = self.te_bilstm(sentence_inputs)
+            te_sequence_output = self.te_dense(te_sequence_output)
+            tc_sequence_output, _ = self.tc_bilstm(sentence_inputs)
+            tc_sequence_output = self.tc_dense(tc_sequence_output)
 
-            ae_final_sequence_output = torch.cat([bert_sequence_output, ae_sequence_output], -1)
+            te_final_sequence_output = torch.cat([bert_sequence_output, te_sequence_output], -1)
 
-            ae_logits = self.extraction(ae_final_sequence_output)  # [N, L, 2]
-            start_logits, end_logits = ae_logits.split(1, dim=-1)
+            te_logits = self.extraction(te_final_sequence_output)  # [N, L, 2]
+            start_logits, end_logits = te_logits.split(1, dim=-1)
             start_logits = start_logits.squeeze(-1)
             end_logits = end_logits.squeeze(-1)
 
@@ -692,14 +691,14 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
             start_logits = sigmoid(start_logits)
             end_logits = sigmoid(end_logits)
 
-            start_aspect_num = torch.sum((sigmoid(start_logits) > 0.5).to(dtype=start_logits.dtype) * attention_mask.to(
+            start_target_num = torch.sum((sigmoid(start_logits) > 0.5).to(dtype=start_logits.dtype) * attention_mask.to(
                 dtype=start_logits.dtype), -1)
-            end_aspect_num = torch.sum(
+            end_target_num = torch.sum(
                 (sigmoid(end_logits) > 0.5).to(dtype=end_logits.dtype) * attention_mask.to(dtype=end_logits.dtype), -1)
-            aspect_num_prediction = (start_aspect_num + end_aspect_num) / 2
+            target_num_prediction = (start_target_num + end_target_num) / 2
 
-            ac_final_sequence_output = torch.cat([bert_sequence_output, ac_sequence_output], -1)
-            return start_logits, end_logits, aspect_num_prediction, ac_final_sequence_output
+            tc_final_sequence_output = torch.cat([bert_sequence_output, tc_sequence_output], -1)
+            return start_logits, end_logits, target_num_prediction, tc_final_sequence_output
 
         elif mode == 'classify_inference':
             assert span_starts is not None and span_ends is not None and ac_final_sequence_output is not None
@@ -714,9 +713,9 @@ class BertForInteractSpanExtractAndClassification(nn.Module):
             span_pooled_output = self.activation(span_pooled_output)
             span_pooled_output = self.dropout(span_pooled_output)
 
-            ac_logits = self.classifier(span_pooled_output)  # [N*M, 5]
+            tc_logits = self.classifier(span_pooled_output)  # [N*M, 5]
 
-            return reconstruct(ac_logits, span_starts)
+            return reconstruct(tc_logits, span_starts)
 
 
 class BertForCollapsedSpanAspectExtractionAndClassification(nn.Module):
